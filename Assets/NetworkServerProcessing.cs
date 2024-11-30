@@ -6,24 +6,45 @@ static public class NetworkServerProcessing
 {
 
     #region Send and Receive Data Functions
-    static public void ReceivedMessageFromClient(string msg, int clientConnectionID, TransportPipeline pipeline)
-    {
-        Debug.Log("Network msg received =  " + msg + ", from connection id = " + clientConnectionID + ", from pipeline = " + pipeline);
+    private static Dictionary<int, string> connectionToUsername = new Dictionary<int, string>();
+    private static Dictionary<string, string> accounts = new Dictionary<string, string>();
 
+    public static void ReceivedMessageFromClient(string msg, int clientConnectionID, TransportPipeline pipeline)
+    {
         string[] csv = msg.Split(',');
         int signifier = int.Parse(csv[0]);
 
-        if (signifier == ClientToServerSignifiers.asd)
+        if (signifier == ClientToServerSignifiers.CreateAccount)
         {
-
+            string username = csv[1];
+            string password = csv[2];
+            if (!accounts.ContainsKey(username))
+            {
+                accounts[username] = password;
+                SendMessageToClient($"{ServerToClientSignifiers.AccountCreated}", clientConnectionID, pipeline);
+            }
+            else
+            {
+                SendMessageToClient($"{ServerToClientSignifiers.AccountCreationFailed}", clientConnectionID, pipeline);
+            }
         }
-        // else if (signifier == ClientToServerSignifiers.asd)
-        // {
-
-        // }
-
-        //gameLogic.DoSomething();
+        else if (signifier == ClientToServerSignifiers.Login)
+        {
+            string username = csv[1];
+            string password = csv[2];
+            if (accounts.ContainsKey(username) && accounts[username] == password)
+            {
+                connectionToUsername[clientConnectionID] = username;
+                SendMessageToClient($"{ServerToClientSignifiers.LoginSuccessful}", clientConnectionID, pipeline);
+            }
+            else
+            {
+                SendMessageToClient($"{ServerToClientSignifiers.LoginFailed}", clientConnectionID, pipeline);
+            }
+        }
     }
+
+
     static public void SendMessageToClient(string msg, int clientConnectionID, TransportPipeline pipeline)
     {
         networkServer.SendMessageToClient(msg, clientConnectionID, pipeline);
@@ -64,16 +85,17 @@ static public class NetworkServerProcessing
     #endregion
 }
 
-#region Protocol Signifiers
-static public class ClientToServerSignifiers
+public static class ClientToServerSignifiers
 {
-    public const int asd = 1;
+    public const int CreateAccount = 1; // For account creation requests
+    public const int Login = 2;        // For login requests
 }
 
-static public class ServerToClientSignifiers
+public static class ServerToClientSignifiers
 {
-    public const int asd = 1;
+    public const int AccountCreated = 1;           // Response for successful account creation
+    public const int AccountCreationFailed = 2;    // Response for failed account creation
+    public const int LoginSuccessful = 3;          // Response for successful login
+    public const int LoginFailed = 4;              // Response for failed login
 }
-
-#endregion
 
