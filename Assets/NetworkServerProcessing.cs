@@ -42,8 +42,32 @@ static public class NetworkServerProcessing
                 SendMessageToClient($"{ServerToClientSignifiers.AccountCreationFailed}", clientConnectionID, pipeline);
             }
         }
+        else if (signifier == ClientToServerSignifiers.DeleteAccount)
+        {
+            string username = csv[1];
 
+            if (accounts.ContainsKey(username))
+            {
+                accounts.Remove(username);
+                SaveAccounts(); // Save the updated account list to the file
 
+                // Send success message
+                SendMessageToClient($"{ServerToClientSignifiers.AccountDeleted},{username}", clientConnectionID, pipeline);
+
+                // Send updated account list to the client
+                List<string> formattedAccounts = new List<string>();
+                foreach (var account in accounts)
+                {
+                    formattedAccounts.Add($"{account.Key}:{account.Value}");
+                }
+                string accountList = string.Join(",", formattedAccounts);
+                SendMessageToClient($"{ServerToClientSignifiers.AccountList},{accountList}", clientConnectionID, TransportPipeline.ReliableAndInOrder);
+            }
+            else
+            {
+                SendMessageToClient($"{ServerToClientSignifiers.AccountDeletionFailed},{username}", clientConnectionID, pipeline);
+            }
+        }
         else if (signifier == ClientToServerSignifiers.Login)
         {
             string username = csv[1];
