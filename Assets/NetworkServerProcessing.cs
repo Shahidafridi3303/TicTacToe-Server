@@ -83,10 +83,16 @@ static public class NetworkServerProcessing
     static public void ConnectionEvent(int clientConnectionID)
     {
         LoadAccounts(); // Ensure accounts are loaded when a client connects
-        string accountList = string.Join(",", accounts.Keys); // Create a comma-separated list of account usernames
+        List<string> formattedAccounts = new List<string>();
+        foreach (var account in accounts)
+        {
+            formattedAccounts.Add($"{account.Key}:{account.Value}");
+        }
+        string accountList = string.Join(",", formattedAccounts); // Create a comma-separated list of username:password
         Debug.Log($"Sending Account List to Client {clientConnectionID}: {accountList}");
         SendMessageToClient($"{ServerToClientSignifiers.AccountList},{accountList}", clientConnectionID, TransportPipeline.ReliableAndInOrder);
     }
+
 
     static public void DisconnectionEvent(int clientConnectionID)
     {

@@ -1,6 +1,4 @@
-Player1,Enter Password
+Player1,79887
 Player2,1234
-Player3,Enter Password
-Player4,Enter Password
-Enter Username,Enter Password
-Player6,Enter Password
+Player3,14545
+Player4,232234
