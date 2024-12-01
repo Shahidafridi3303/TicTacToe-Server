@@ -28,7 +28,12 @@ static public class NetworkServerProcessing
                 SendMessageToClient($"{ServerToClientSignifiers.AccountCreated}", clientConnectionID, pipeline);
 
                 // Send updated account list to the client
-                string accountList = string.Join(",", accounts.Keys); // Create a valid comma-separated list
+                List<string> formattedAccounts = new List<string>();
+                foreach (var account in accounts)
+                {
+                    formattedAccounts.Add($"{account.Key}:{account.Value}");
+                }
+                string accountList = string.Join(",", formattedAccounts);
                 Debug.Log($"Updated Account List Sent to Client {clientConnectionID}: {accountList}");
                 SendMessageToClient($"{ServerToClientSignifiers.AccountList},{accountList}", clientConnectionID, TransportPipeline.ReliableAndInOrder);
             }
