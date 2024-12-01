@@ -10,6 +10,12 @@ static public class NetworkServerProcessing
     static GameLogic gameLogic; // Reference to GameLogic
     static NetworkServer networkServer;
 
+    private static Dictionary<string, List<int>> gameRooms = new Dictionary<string, List<int>>(); // Room name to list of client IDs
+
+    public const int CreateOrJoinGameRoom = 4; // New signifier for game room creation/joining
+    public const int LeaveGameRoom = 5; // New signifier for leaving a game room
+    public const int StartGame = 6; // New signifier for starting the game
+
     static public void ReceivedMessageFromClient(string msg, int clientConnectionID, TransportPipeline pipeline)
     {
         string[] csv = msg.Split(',');
@@ -22,50 +28,12 @@ static public class NetworkServerProcessing
             if (!accounts.ContainsKey(username))
             {
                 accounts[username] = password;
-                SaveAccounts(); // Save the new account to the file
-
-                // Send success message
+                SaveAccounts();
                 SendMessageToClient($"{ServerToClientSignifiers.AccountCreated}", clientConnectionID, pipeline);
-
-                // Send updated account list to the client
-                List<string> formattedAccounts = new List<string>();
-                foreach (var account in accounts)
-                {
-                    formattedAccounts.Add($"{account.Key}:{account.Value}");
-                }
-                string accountList = string.Join(",", formattedAccounts);
-                Debug.Log($"Updated Account List Sent to Client {clientConnectionID}: {accountList}");
-                SendMessageToClient($"{ServerToClientSignifiers.AccountList},{accountList}", clientConnectionID, TransportPipeline.ReliableAndInOrder);
             }
             else
             {
                 SendMessageToClient($"{ServerToClientSignifiers.AccountCreationFailed}", clientConnectionID, pipeline);
-            }
-        }
-        else if (signifier == ClientToServerSignifiers.DeleteAccount)
-        {
-            string username = csv[1];
-
-            if (accounts.ContainsKey(username))
-            {
-                accounts.Remove(username);
-                SaveAccounts(); // Save the updated account list to the file
-
-                // Send success message
-                SendMessageToClient($"{ServerToClientSignifiers.AccountDeleted},{username}", clientConnectionID, pipeline);
-
-                // Send updated account list to the client
-                List<string> formattedAccounts = new List<string>();
-                foreach (var account in accounts)
-                {
-                    formattedAccounts.Add($"{account.Key}:{account.Value}");
-                }
-                string accountList = string.Join(",", formattedAccounts);
-                SendMessageToClient($"{ServerToClientSignifiers.AccountList},{accountList}", clientConnectionID, TransportPipeline.ReliableAndInOrder);
-            }
-            else
-            {
-                SendMessageToClient($"{ServerToClientSignifiers.AccountDeletionFailed},{username}", clientConnectionID, pipeline);
             }
         }
         else if (signifier == ClientToServerSignifiers.Login)
@@ -82,27 +50,48 @@ static public class NetworkServerProcessing
                 SendMessageToClient($"{ServerToClientSignifiers.LoginFailed}", clientConnectionID, pipeline);
             }
         }
-        else if (signifier == ClientToServerSignifiers.DeleteAccount)
+        else if (signifier == ClientToServerSignifiers.CreateOrJoinGameRoom)
         {
-            string username = csv[1];
-            if (accounts.ContainsKey(username))
+            string roomName = csv[1];
+            if (!gameRooms.ContainsKey(roomName))
+                gameRooms[roomName] = new List<int>();
+
+            gameRooms[roomName].Add(clientConnectionID);
+            SendMessageToClient($"{ServerToClientSignifiers.GameRoomCreatedOrJoined},{roomName},{gameRooms[roomName].Count}", clientConnectionID, pipeline);
+
+            if (gameRooms[roomName].Count == 2)
             {
-                accounts.Remove(username);
-                SaveAccounts(); // Save the updated accounts list to the file
-
-                // Send success message
-                SendMessageToClient($"{ServerToClientSignifiers.AccountDeleted},{username}", clientConnectionID, pipeline);
-
-                // Send updated account list to the client
-                string accountList = string.Join(",", accounts.Keys);
-                SendMessageToClient($"{ServerToClientSignifiers.AccountList},{accountList}", clientConnectionID, TransportPipeline.ReliableAndInOrder);
+                foreach (int clientID in gameRooms[roomName])
+                    SendMessageToClient($"{ServerToClientSignifiers.StartGame},{roomName},Ready", clientID, pipeline);
             }
-            else
+        }
+        else if (signifier == ClientToServerSignifiers.LeaveGameRoom)
+        {
+            string roomName = csv[1];
+            if (gameRooms.ContainsKey(roomName))
             {
-                SendMessageToClient($"{ServerToClientSignifiers.AccountDeletionFailed},{username}", clientConnectionID, pipeline);
+                gameRooms[roomName].Remove(clientConnectionID);
+                if (gameRooms[roomName].Count == 0)
+                    gameRooms.Remove(roomName);
+            }
+        }
+        else if (signifier == ClientToServerSignifiers.SendMessageToOpponent)
+        {
+            string roomName = csv[1];
+            string message = csv[2];
+            if (gameRooms.ContainsKey(roomName))
+            {
+                foreach (int clientID in gameRooms[roomName])
+                {
+                    if (clientID != clientConnectionID) // Send to opponent only
+                    {
+                        SendMessageToClient($"{ServerToClientSignifiers.OpponentMessage},{message}", clientID, pipeline);
+                    }
+                }
             }
         }
     }
+
 
     static public void SendMessageToClient(string msg, int clientConnectionID, TransportPipeline pipeline)
     {
@@ -190,6 +179,10 @@ public static class ClientToServerSignifiers
     public const int CreateAccount = 1;
     public const int Login = 2;
     public const int DeleteAccount = 3; // New signifier for deleting accounts
+
+    public const int CreateOrJoinGameRoom = 4;
+    public const int LeaveGameRoom = 5;
+    public const int SendMessageToOpponent = 6;
 }
 
 public static class ServerToClientSignifiers
@@ -201,4 +194,8 @@ public static class ServerToClientSignifiers
     public const int AccountList = 5;
     public const int AccountDeleted = 6; // New signifier for successful deletion
     public const int AccountDeletionFailed = 7; // New signifier for failed deletion
+
+    public const int GameRoomCreatedOrJoined = 8;
+    public const int StartGame = 9;
+    public const int OpponentMessage = 10;
 }
