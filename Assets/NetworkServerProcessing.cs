@@ -16,8 +16,6 @@ static public class NetworkServerProcessing
     public const int LeaveGameRoom = 5; // New signifier for leaving a game room
     public const int StartGame = 6; // New signifier for starting the game
 
-    private static Dictionary<string, string[]> gameStates = new Dictionary<string, string[]>();
-
     static public void ReceivedMessageFromClient(string msg, int clientConnectionID, TransportPipeline pipeline)
     {
         string[] csv = msg.Split(',');
@@ -92,39 +90,8 @@ static public class NetworkServerProcessing
                 }
             }
         }
-        else if (signifier == 7) // Handle Tic Tac Toe move
-        {
-            string roomName = csv[1];
-            int cellIndex = int.Parse(csv[2]);
-            string symbol = csv[3];
-
-            // Initialize game state if not already done
-            if (!gameStates.ContainsKey(roomName))
-                gameStates[roomName] = new string[9];
-
-            // Broadcast the move to the other player
-            foreach (int clientID in gameRooms[roomName])
-            {
-                SendMessageToClient($"11,{roomName},{cellIndex},{symbol}", clientID, pipeline);
-            }
-
-            // Update server-side game state and check for winner
-            if (CheckVictoryCondition(roomName, cellIndex, symbol))
-            {
-                foreach (int clientID in gameRooms[roomName])
-                {
-                    SendMessageToClient($"12,{roomName},{symbol} Wins", clientID, pipeline);
-                }
-            }
-            else if (CheckDrawCondition(roomName))
-            {
-                foreach (int clientID in gameRooms[roomName])
-                {
-                    SendMessageToClient($"12,{roomName},Draw", clientID, pipeline);
-                }
-            }
-        }
     }
+
 
     static public void SendMessageToClient(string msg, int clientConnectionID, TransportPipeline pipeline)
     {
@@ -205,31 +172,6 @@ static public class NetworkServerProcessing
     {
         return networkServer;
     }
-
-    private static bool CheckVictoryCondition(string roomName, int cellIndex, string symbol)
-    {
-        string[] board = gameStates[roomName];
-        board[cellIndex] = symbol;
-
-        // Check rows, columns, diagonals
-        int row = cellIndex / 3;
-        int col = cellIndex % 3;
-
-        return (board[row * 3] == symbol && board[row * 3 + 1] == symbol && board[row * 3 + 2] == symbol) ||
-               (board[col] == symbol && board[col + 3] == symbol && board[col + 6] == symbol) ||
-               (board[0] == symbol && board[4] == symbol && board[8] == symbol) ||
-               (board[2] == symbol && board[4] == symbol && board[6] == symbol);
-    }
-
-    private static bool CheckDrawCondition(string roomName)
-    {
-        string[] board = gameStates[roomName];
-        foreach (string cell in board)
-        {
-            if (string.IsNullOrEmpty(cell)) return false;
-        }
-        return true;
-    }
 }
 
 public static class ClientToServerSignifiers
@@ -256,7 +198,4 @@ public static class ServerToClientSignifiers
     public const int GameRoomCreatedOrJoined = 8;
     public const int StartGame = 9;
     public const int OpponentMessage = 10;
-
-    public const int TicTacToeMove = 11;
-    public const int GameResult = 12;
 }
