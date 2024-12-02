@@ -117,8 +117,11 @@ static public class NetworkServerProcessing
             int x = int.Parse(csv[2]);
             int y = int.Parse(csv[3]);
 
+            Debug.Log($"Received PlayerMove from Client {clientConnectionID}: Room {roomName}, x: {x}, y: {y}"); // Add this
+
             HandlePlayerMove(roomName, clientConnectionID, x, y);
         }
+
 
     }
 
@@ -211,46 +214,71 @@ static public class NetworkServerProcessing
 
     private static void HandlePlayerMove(string roomName, int clientID, int x, int y)
     {
-        if (gameBoards.ContainsKey(roomName))
+        if (!gameBoards.ContainsKey(roomName))
         {
-            int[,] board = gameBoards[roomName];
-            int player = currentTurn[roomName];
+            Debug.LogError($"Room {roomName} does not exist!"); // Add this
+            return;
+        }
 
-            // Ensure it's the correct player's turn
-            if (clientID == player && board[x, y] == 0) // Empty cell and valid turn
+        Debug.Log($"Processing PlayerMove for Room {roomName} by Client {clientID}: x={x}, y={y}"); // Add this
+
+        int[,] board = gameBoards[roomName];
+        int currentPlayer = currentTurn[roomName];
+
+        // Log the current board state before the move
+        Debug.Log($"Current board state for Room {roomName}:"); // Add this
+        for (int i = 0; i < 3; i++)
+        {
+            Debug.Log($"{board[i, 0]} {board[i, 1]} {board[i, 2]}");
+        }
+
+        // Ensure it's the correct player's turn and the cell is empty
+        if (clientID == currentPlayer && board[x, y] == 0)
+        {
+            int playerMark = (gameRooms[roomName].IndexOf(clientID) == 0) ? 1 : 2; // Player 1 = 1 (X), Player 2 = 2 (O)
+            board[x, y] = playerMark;
+
+            // Broadcast the move to all clients in the room
+            foreach (int client in gameRooms[roomName])
             {
-                int playerMark = (gameRooms[roomName].IndexOf(clientID) == 0) ? 1 : 2; // Player 1 = 1 (X), Player 2 = 2 (O)
-                board[x, y] = playerMark;
+                Debug.Log($"Sending move update to Client {client}: Player {playerMark} at ({x}, {y})");
+                SendMessageToClient($"{ServerToClientSignifiers.PlayerMove},{x},{y},{playerMark}", client, TransportPipeline.ReliableAndInOrder);
+            }
 
-                // Notify both players of the move
-                foreach (int id in gameRooms[roomName])
+            // Check for win/draw conditions
+            if (CheckWinCondition(board, playerMark))
+            {
+                foreach (int client in gameRooms[roomName])
                 {
-                    SendMessageToClient($"{ServerToClientSignifiers.PlayerMove},{x},{y},{playerMark}", id, TransportPipeline.ReliableAndInOrder);
+                    Debug.Log($"Player {playerMark} wins. Sending GameResult to Client {client}");
+                    SendMessageToClient($"{ServerToClientSignifiers.GameResult},{playerMark}", client, TransportPipeline.ReliableAndInOrder);
                 }
-
-                // Check for win or draw
-                if (CheckWinCondition(board, playerMark))
+                ResetGameRoom(roomName);
+            }
+            else if (CheckDrawCondition(board))
+            {
+                foreach (int client in gameRooms[roomName])
                 {
-                    foreach (int id in gameRooms[roomName])
-                    {
-                        SendMessageToClient($"{ServerToClientSignifiers.GameResult},{playerMark}", id, TransportPipeline.ReliableAndInOrder);
-                    }
-                    ResetGameRoom(roomName);
+                    Debug.Log($"Game Draw. Sending GameResult to Client {client}");
+                    SendMessageToClient($"{ServerToClientSignifiers.GameResult},0", client, TransportPipeline.ReliableAndInOrder);
                 }
-                else if (CheckDrawCondition(board))
+                ResetGameRoom(roomName);
+            }
+            else
+            {
+                // Switch turn
+                currentTurn[roomName] = gameRooms[roomName][1 - gameRooms[roomName].IndexOf(clientID)];
+                foreach (int client in gameRooms[roomName])
                 {
-                    foreach (int id in gameRooms[roomName])
-                    {
-                        SendMessageToClient($"{ServerToClientSignifiers.GameResult},0", id, TransportPipeline.ReliableAndInOrder);
-                    }
-                    ResetGameRoom(roomName);
-                }
-                else
-                {
-                    // Switch turns
-                    currentTurn[roomName] = gameRooms[roomName][1 - gameRooms[roomName].IndexOf(clientID)];
+                    int isPlayerTurn = (client == currentTurn[roomName]) ? 1 : 0;
+                    Debug.Log($"Notifying Client {client} of turn update: IsPlayerTurn = {isPlayerTurn}");
+                    SendMessageToClient($"{ServerToClientSignifiers.TurnUpdate},{isPlayerTurn}", client, TransportPipeline.ReliableAndInOrder);
                 }
             }
+        }
+        else
+        {
+            Debug.LogWarning($"Invalid move or not player's turn. Room: {roomName}, Client: {clientID}");
         }
     }
 
@@ -317,4 +345,5 @@ public static class ServerToClientSignifiers
 
     public const int PlayerMove = 11; // Sent when a player makes a move
     public const int GameResult = 12; // Sent when the game ends
+    public const int TurnUpdate = 13; // New signifier for turn updates
 }
