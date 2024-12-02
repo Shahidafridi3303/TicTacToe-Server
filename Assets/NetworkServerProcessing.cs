@@ -122,6 +122,21 @@ static public class NetworkServerProcessing
             HandlePlayerMove(roomName, clientConnectionID, x, y);
         }
 
+        else if (signifier == ClientToServerSignifiers.SendMessageToOpponent)
+        {
+            string roomName = csv[1];
+            string message = csv[2];
+            if (gameRooms.ContainsKey(roomName))
+            {
+                foreach (int clientID in gameRooms[roomName])
+                {
+                    if (clientID != clientConnectionID) // Send to opponent only
+                    {
+                        SendMessageToClient($"{ServerToClientSignifiers.OpponentMessage},{message}", clientID, pipeline);
+                    }
+                }
+            }
+        }
 
     }
 
