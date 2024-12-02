@@ -208,15 +208,27 @@ static public class NetworkServerProcessing
     // Initialize a new game board when two players join
     private static void InitializeGame(string roomName)
     {
-        gameBoards[roomName] = new int[3, 3]; // Empty board
-        currentTurn[roomName] = 1; // Player 1 starts
+        if (!gameBoards.ContainsKey(roomName))
+        {
+            gameBoards[roomName] = new int[3, 3]; // Empty board
+            currentTurn[roomName] = gameRooms[roomName][0]; // Set the first player's turn
+            Debug.Log($"Turn initialized for room '{roomName}'. Player 1's turn.");
+        }
+        else
+        {
+            Debug.LogWarning($"Game board for room '{roomName}' already exists. Reinitializing.");
+            gameBoards[roomName] = new int[3, 3]; // Reset board
+        }
+
+        currentTurn[roomName] = gameRooms[roomName][0]; // Ensure Player 1 is the first to play
+        Debug.Log($"Turn initialized for room '{roomName}'. Player 1's turn.");
     }
 
     private static void HandlePlayerMove(string roomName, int clientID, int x, int y)
     {
-        if (!gameBoards.ContainsKey(roomName))
+        if (!gameBoards.ContainsKey(roomName) || !currentTurn.ContainsKey(roomName))
         {
-            Debug.LogError($"Room {roomName} does not exist!"); // Add this
+            Debug.LogWarning($"Room does not exist or is not properly initialized: {roomName}");
             return;
         }
 
@@ -311,10 +323,30 @@ static public class NetworkServerProcessing
 
     private static void ResetGameRoom(string roomName)
     {
-        gameBoards.Remove(roomName);
-        currentTurn.Remove(roomName);
-        gameRooms[roomName].Clear();
+        if (gameBoards.ContainsKey(roomName))
+        {
+            gameBoards.Remove(roomName);
+            Debug.Log($"Game board for room '{roomName}' removed.");
+        }
+
+        if (currentTurn.ContainsKey(roomName))
+        {
+            currentTurn.Remove(roomName);
+            Debug.Log($"Turn information for room '{roomName}' removed.");
+        }
+
+        if (gameRooms.ContainsKey(roomName))
+        {
+            gameRooms[roomName].Clear();
+            gameRooms.Remove(roomName);
+            Debug.Log($"Room '{roomName}' removed.");
+        }
+        else
+        {
+            Debug.LogWarning($"Attempted to reset a non-existent room: {roomName}");
+        }
     }
+
 }
 
 public static class ClientToServerSignifiers
