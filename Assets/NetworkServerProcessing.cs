@@ -102,22 +102,28 @@ static public class NetworkServerProcessing
             if (!gameStates.ContainsKey(roomName))
                 gameStates[roomName] = new string[9];
 
-            gameStates[roomName][cellIndex] = symbol;
-
-            // Broadcast the move to both players
+            // Broadcast the move to the other player
             foreach (int clientID in gameRooms[roomName])
             {
                 SendMessageToClient($"11,{roomName},{cellIndex},{symbol}", clientID, pipeline);
             }
 
-            // Determine the next player's turn
-            string nextTurnSymbol = symbol == "X" ? "O" : "X";
-            foreach (int clientID in gameRooms[roomName])
+            // Update server-side game state and check for winner
+            if (CheckVictoryCondition(roomName, cellIndex, symbol))
             {
-                SendMessageToClient($"13,{roomName},{nextTurnSymbol}", clientID, pipeline); // Update turn
+                foreach (int clientID in gameRooms[roomName])
+                {
+                    SendMessageToClient($"12,{roomName},{symbol} Wins", clientID, pipeline);
+                }
+            }
+            else if (CheckDrawCondition(roomName))
+            {
+                foreach (int clientID in gameRooms[roomName])
+                {
+                    SendMessageToClient($"12,{roomName},Draw", clientID, pipeline);
+                }
             }
         }
-
     }
 
     static public void SendMessageToClient(string msg, int clientConnectionID, TransportPipeline pipeline)
