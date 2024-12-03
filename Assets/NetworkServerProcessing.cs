@@ -427,6 +427,14 @@ static public class NetworkServerProcessing
                     SendMessageToClient($"{ServerToClientSignifiers.GameResult},{playerMark}", client, TransportPipeline.ReliableAndInOrder);
                 }
 
+                if (observers.ContainsKey(roomName))
+                {
+                    foreach (int observer in observers[roomName])
+                    {
+                        SendMessageToClient($"{ServerToClientSignifiers.GameResult},{playerMark}", observer, TransportPipeline.ReliableAndInOrder);
+                    }
+                }
+
                 NotifyRoomDestroyed(roomName);
                 ResetGameRoom(roomName);
             }
@@ -437,15 +445,25 @@ static public class NetworkServerProcessing
                     SendMessageToClient($"{ServerToClientSignifiers.GameResult},0", client, TransportPipeline.ReliableAndInOrder);
                 }
 
+                if (observers.ContainsKey(roomName))
+                {
+                    foreach (int observer in observers[roomName])
+                    {
+                        SendMessageToClient($"{ServerToClientSignifiers.GameResult},0", observer, TransportPipeline.ReliableAndInOrder);
+                    }
+                }
+
                 NotifyRoomDestroyed(roomName);
                 ResetGameRoom(roomName);
             }
             else
             {
+                // Switch turn
                 currentTurn[roomName] = gameRooms[roomName][1 - gameRooms[roomName].IndexOf(clientID)];
                 foreach (int client in gameRooms[roomName])
                 {
                     int isPlayerTurn = (client == currentTurn[roomName]) ? 1 : 0;
+                    Debug.Log($"Notifying Client {client} of turn update: IsPlayerTurn = {isPlayerTurn}");
                     SendMessageToClient($"{ServerToClientSignifiers.TurnUpdate},{isPlayerTurn}", client, TransportPipeline.ReliableAndInOrder);
                 }
             }
