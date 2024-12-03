@@ -10,7 +10,8 @@ static public class NetworkServerProcessing
     static GameLogic gameLogic; // Reference to GameLogic
     static NetworkServer networkServer;
 
-    private static Dictionary<string, List<int>> gameRooms = new Dictionary<string, List<int>>(); // Room name to list of client IDs
+    private static Dictionary<string, List<int>> gameRooms = new Dictionary<string, List<int>>(); // Room to players
+    private static Dictionary<string, List<int>> observers = new Dictionary<string, List<int>>(); // Room to observers
 
     public const int CreateOrJoinGameRoom = 4; // New signifier for game room creation/joining
     public const int LeaveGameRoom = 5; // New signifier for leaving a game room
@@ -57,33 +58,35 @@ static public class NetworkServerProcessing
         {
             string roomName = csv[1];
 
-            // Check if the room exists; if not, create it
             if (!gameRooms.ContainsKey(roomName))
-                gameRooms[roomName] = new List<int>();
-
-            // Add the player to the room
-            gameRooms[roomName].Add(clientConnectionID);
-
-            // Notify the client that they joined/created the room
-            SendMessageToClient($"{ServerToClientSignifiers.GameRoomCreatedOrJoined},{roomName},{gameRooms[roomName].Count}", clientConnectionID, pipeline);
-
-            // Check if the room is now full (2 players)
-            if (gameRooms[roomName].Count == 2)
             {
-                // Initialize the game logic for this room
-                InitializeGame(roomName);
+                gameRooms[roomName] = new List<int>();
+                observers[roomName] = new List<int>();
+            }
 
-                // Get player connection IDs
-                int player1 = gameRooms[roomName][0];
-                int player2 = gameRooms[roomName][1];
+            if (gameRooms[roomName].Count < 2)
+            {
+                gameRooms[roomName].Add(clientConnectionID);
+                SendMessageToClient($"{ServerToClientSignifiers.GameRoomCreatedOrJoined},{roomName},{gameRooms[roomName].Count}", clientConnectionID, pipeline);
 
-                // Notify the clients of their roles and turns
-                SendMessageToClient($"{ServerToClientSignifiers.StartGame},{roomName},X,1", player1, TransportPipeline.ReliableAndInOrder); // Player 1 (X)
-                SendMessageToClient($"{ServerToClientSignifiers.StartGame},{roomName},O,0", player2, TransportPipeline.ReliableAndInOrder); // Player 2 (O)
+                if (gameRooms[roomName].Count == 2)
+                {
+                    InitializeGame(roomName);
 
-                Debug.Log($"Game started in room {roomName} - Player 1: {player1} (X), Player 2: {player2} (O)");
+                    int player1 = gameRooms[roomName][0];
+                    int player2 = gameRooms[roomName][1];
+
+                    SendMessageToClient($"{ServerToClientSignifiers.StartGame},{roomName},X,1", player1, TransportPipeline.ReliableAndInOrder);
+                    SendMessageToClient($"{ServerToClientSignifiers.StartGame},{roomName},O,0", player2, TransportPipeline.ReliableAndInOrder);
+                }
+            }
+            else
+            {
+                observers[roomName].Add(clientConnectionID);
+                SendMessageToClient($"{ServerToClientSignifiers.ObserverJoined},{roomName}", clientConnectionID, pipeline);
             }
         }
+
 
 
         else if (signifier == ClientToServerSignifiers.LeaveGameRoom)
@@ -268,8 +271,13 @@ static public class NetworkServerProcessing
             // Broadcast the move to all clients in the room
             foreach (int client in gameRooms[roomName])
             {
-                Debug.Log($"Sending move update to Client {client}: Player {playerMark} at ({x}, {y})");
                 SendMessageToClient($"{ServerToClientSignifiers.PlayerMove},{x},{y},{playerMark}", client, TransportPipeline.ReliableAndInOrder);
+            }
+
+            // Notify observers of the move
+            foreach (int observer in observers[roomName])
+            {
+                SendMessageToClient($"{ServerToClientSignifiers.PlayerMove},{x},{y},{playerMark}", observer, TransportPipeline.ReliableAndInOrder);
             }
 
             // Check for win/draw conditions
@@ -389,6 +397,7 @@ public static class ServerToClientSignifiers
     public const int GameRoomCreatedOrJoined = 8;
     public const int StartGame = 9;
     public const int OpponentMessage = 10;
+    public const int ObserverJoined = 14; // New signifier for observers joining
 
     public const int PlayerMove = 11; // Sent when a player makes a move
     public const int GameResult = 12; // Sent when the game ends
