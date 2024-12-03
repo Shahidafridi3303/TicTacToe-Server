@@ -382,7 +382,6 @@ static public class NetworkServerProcessing
         }
         else
         {
-            Debug.LogWarning($"Game board for room '{roomName}' already exists. Reinitializing.");
             gameBoards[roomName] = new int[3, 3]; // Reset board
         }
 
