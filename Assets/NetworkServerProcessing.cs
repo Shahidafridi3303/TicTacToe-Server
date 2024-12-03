@@ -348,25 +348,16 @@ static public class NetworkServerProcessing
             return;
         }
 
-        Debug.Log($"Processing PlayerMove for Room {roomName} by Client {clientID}: x={x}, y={y}"); // Add this
+        Debug.Log($"Processing PlayerMove for Room {roomName} by Client {clientID}: x={x}, y={y}");
 
         int[,] board = gameBoards[roomName];
         int currentPlayer = currentTurn[roomName];
 
-        // Log the current board state before the move
-        Debug.Log($"Current board state for Room {roomName}:"); // Add this
-        for (int i = 0; i < 3; i++)
-        {
-            Debug.Log($"{board[i, 0]} {board[i, 1]} {board[i, 2]}");
-        }
-
-        // Ensure it's the correct player's turn and the cell is empty
         if (clientID == currentPlayer && board[x, y] == 0)
         {
-            int playerMark = (gameRooms[roomName].IndexOf(clientID) == 0) ? 1 : 2; // Player 1 = 1 (X), Player 2 = 2 (O)
+            int playerMark = (gameRooms[roomName].IndexOf(clientID) == 0) ? 1 : 2;
             board[x, y] = playerMark;
 
-            // Broadcast the move to all clients in the room
             foreach (int client in gameRooms[roomName])
             {
                 SendMessageToClient($"{ServerToClientSignifiers.PlayerMove},{x},{y},{playerMark}", client, TransportPipeline.ReliableAndInOrder);
@@ -380,33 +371,32 @@ static public class NetworkServerProcessing
                 }
             }
 
-            // Check for win/draw conditions
             if (CheckWinCondition(board, playerMark))
             {
                 foreach (int client in gameRooms[roomName])
                 {
-                    Debug.Log($"Player {playerMark} wins. Sending GameResult to Client {client}");
                     SendMessageToClient($"{ServerToClientSignifiers.GameResult},{playerMark}", client, TransportPipeline.ReliableAndInOrder);
                 }
+
+                NotifyRoomDestroyed(roomName);
                 ResetGameRoom(roomName);
             }
             else if (CheckDrawCondition(board))
             {
                 foreach (int client in gameRooms[roomName])
                 {
-                    Debug.Log($"Game Draw. Sending GameResult to Client {client}");
                     SendMessageToClient($"{ServerToClientSignifiers.GameResult},0", client, TransportPipeline.ReliableAndInOrder);
                 }
+
+                NotifyRoomDestroyed(roomName);
                 ResetGameRoom(roomName);
             }
             else
             {
-                // Switch turn
                 currentTurn[roomName] = gameRooms[roomName][1 - gameRooms[roomName].IndexOf(clientID)];
                 foreach (int client in gameRooms[roomName])
                 {
                     int isPlayerTurn = (client == currentTurn[roomName]) ? 1 : 0;
-                    Debug.Log($"Notifying Client {client} of turn update: IsPlayerTurn = {isPlayerTurn}");
                     SendMessageToClient($"{ServerToClientSignifiers.TurnUpdate},{isPlayerTurn}", client, TransportPipeline.ReliableAndInOrder);
                 }
             }
@@ -417,6 +407,24 @@ static public class NetworkServerProcessing
         }
     }
 
+    private static void NotifyRoomDestroyed(string roomName)
+    {
+        if (gameRooms.ContainsKey(roomName))
+        {
+            foreach (int client in gameRooms[roomName])
+            {
+                SendMessageToClient($"{ServerToClientSignifiers.GameRoomDestroyed}", client, TransportPipeline.ReliableAndInOrder);
+            }
+        }
+
+        if (observers.ContainsKey(roomName))
+        {
+            foreach (int observer in observers[roomName])
+            {
+                SendMessageToClient($"{ServerToClientSignifiers.GameRoomDestroyed}", observer, TransportPipeline.ReliableAndInOrder);
+            }
+        }
+    }
 
     private static bool CheckWinCondition(int[,] board, int player)
     {
