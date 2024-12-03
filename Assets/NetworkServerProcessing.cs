@@ -116,13 +116,43 @@ static public class NetworkServerProcessing
         else if (signifier == ClientToServerSignifiers.LeaveGameRoom)
         {
             string roomName = csv[1];
+
             if (gameRooms.ContainsKey(roomName))
             {
-                gameRooms[roomName].Remove(clientConnectionID);
-                if (gameRooms[roomName].Count == 0)
+                if (gameRooms[roomName].Contains(clientConnectionID))
+                {
+                    // A player is leaving, destroy the room and notify everyone
+                    Debug.Log($"Player {clientConnectionID} left room {roomName}. Destroying room.");
+
+                    // Notify all clients in the room to go back to GameRoomPanel
+                    foreach (int clientID in gameRooms[roomName])
+                    {
+                        SendMessageToClient($"{ServerToClientSignifiers.GameRoomDestroyed}", clientID, TransportPipeline.ReliableAndInOrder);
+                    }
+
+                    // Notify observers as well
+                    if (observers.ContainsKey(roomName))
+                    {
+                        foreach (int observerID in observers[roomName])
+                        {
+                            SendMessageToClient($"{ServerToClientSignifiers.GameRoomDestroyed}", observerID, TransportPipeline.ReliableAndInOrder);
+                        }
+                    }
+
+                    // Remove the room and its data
                     gameRooms.Remove(roomName);
+                    observers.Remove(roomName);
+                    gameBoards.Remove(roomName);
+                }
+                else if (observers.ContainsKey(roomName) && observers[roomName].Contains(clientConnectionID))
+                {
+                    // An observer is leaving, just remove them
+                    observers[roomName].Remove(clientConnectionID);
+                    Debug.Log($"Observer {clientConnectionID} left room {roomName}. No action required.");
+                }
             }
         }
+
         else if (signifier == ClientToServerSignifiers.SendMessageToOpponent)
         {
             string roomName = csv[1];
@@ -474,4 +504,5 @@ public static class ServerToClientSignifiers
     public const int TurnUpdate = 13; // New signifier for turn updates
 
     public const int BoardStateUpdate = 15; // Sending board state to observer
+    public const int GameRoomDestroyed = 16; // New signifier for destroyed rooms
 }
