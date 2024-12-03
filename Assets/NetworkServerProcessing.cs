@@ -313,7 +313,16 @@ static public class NetworkServerProcessing
         }
     }
 
+    public static void ClearAllGameRoomData()
+    {
+        // Clear all game room-related data
+        gameRooms.Clear();
+        observers.Clear();
+        gameBoards.Clear();
+        currentTurn.Clear();
 
+        Debug.Log("Game room data cleared in NetworkServerProcessing.");
+    }
 
     static public void SetGameLogic(GameLogic GameLogic)
     {

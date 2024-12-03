@@ -16,7 +16,6 @@ public class NetworkServer : MonoBehaviour
     const int MaxNumberOfClientConnections = 1000;
     Dictionary<int, NetworkConnection> idToConnectionLookup;
     Dictionary<NetworkConnection, int> connectionToIDLookup;
-
     void Start()
     {
         if (NetworkServerProcessing.GetNetworkServer() == null)
@@ -24,33 +23,44 @@ public class NetworkServer : MonoBehaviour
             NetworkServerProcessing.SetNetworkServer(this);
             DontDestroyOnLoad(this.gameObject);
 
-            #region Connect
-
-            idToConnectionLookup = new Dictionary<int, NetworkConnection>();
-            connectionToIDLookup = new Dictionary<NetworkConnection, int>();
-
-            networkDriver = NetworkDriver.Create();
-            reliableAndInOrderPipeline = networkDriver.CreatePipeline(typeof(FragmentationPipelineStage), typeof(ReliableSequencedPipelineStage));
-            nonReliableNotInOrderedPipeline = networkDriver.CreatePipeline(typeof(FragmentationPipelineStage));
-            NetworkEndPoint endpoint = NetworkEndPoint.AnyIpv4;
-            endpoint.Port = NetworkPort;
-
-            int error = networkDriver.Bind(endpoint);
-            if (error != 0)
-                Debug.Log("Failed to bind to port " + NetworkPort);
-            else
-                networkDriver.Listen();
-
-            networkConnections = new NativeList<NetworkConnection>(MaxNumberOfClientConnections, Allocator.Persistent);
-
-            #endregion
+            InitializeServer(); // Initialize server logic
+            ClearAllGameRoomData(); // Clear all game room data on server start
         }
         else
         {
-            Debug.Log("Singleton-ish architecture violation detected, investigate where NetworkedServer.cs Start() is being called.  Are you creating a second instance of the NetworkedServer game object or has the NetworkedServer.cs been attached to more than one game object?");
+            Debug.Log("Singleton-ish architecture violation detected, investigate where NetworkServer.cs Start() is being called. Are you creating a second instance of the NetworkServer game object or has the NetworkServer.cs been attached to more than one game object?");
             Destroy(this.gameObject);
         }
     }
+
+    private void ClearAllGameRoomData()
+    {
+        NetworkServerProcessing.ClearAllGameRoomData(); // Call the static method in NetworkServerProcessing
+        Debug.Log("All game room data has been cleared on server start.");
+    }
+
+    private void InitializeServer()
+    {
+        #region Connect
+        idToConnectionLookup = new Dictionary<int, NetworkConnection>();
+        connectionToIDLookup = new Dictionary<NetworkConnection, int>();
+
+        networkDriver = NetworkDriver.Create();
+        reliableAndInOrderPipeline = networkDriver.CreatePipeline(typeof(FragmentationPipelineStage), typeof(ReliableSequencedPipelineStage));
+        nonReliableNotInOrderedPipeline = networkDriver.CreatePipeline(typeof(FragmentationPipelineStage));
+        NetworkEndPoint endpoint = NetworkEndPoint.AnyIpv4;
+        endpoint.Port = NetworkPort;
+
+        int error = networkDriver.Bind(endpoint);
+        if (error != 0)
+            Debug.Log("Failed to bind to port " + NetworkPort);
+        else
+            networkDriver.Listen();
+
+        networkConnections = new NativeList<NetworkConnection>(MaxNumberOfClientConnections, Allocator.Persistent);
+        #endregion
+    }
+
 
     void OnDestroy()
     {
