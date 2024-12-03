@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using System.IO;
+using System;
 
 static public class NetworkServerProcessing
 {
@@ -259,7 +260,6 @@ static public class NetworkServerProcessing
         SendMessageToClient($"{ServerToClientSignifiers.AccountList},{accountList}", clientConnectionID, TransportPipeline.ReliableAndInOrder);
     }
 
-
     static public void DisconnectionEvent(int clientConnectionID)
     {
         if (connectionToUsername.ContainsKey(clientConnectionID))
@@ -272,7 +272,48 @@ static public class NetworkServerProcessing
         {
             Debug.Log($"Client with ID {clientConnectionID} disconnected. No associated username.");
         }
+
+        // Remove client from any game room
+        foreach (var room in gameRooms)
+        {
+            if (room.Value.Contains(clientConnectionID))
+            {
+                Debug.Log($"Client {clientConnectionID} was in room {room.Key}. Removing and notifying others...");
+                room.Value.Remove(clientConnectionID);
+
+                // If there are no players left, destroy the room
+                if (room.Value.Count == 0)
+                {
+                    Debug.Log($"No players left in room {room.Key}. Destroying room.");
+                    gameRooms.Remove(room.Key);
+                    gameBoards.Remove(room.Key);
+                    currentTurn.Remove(room.Key);
+                }
+                else
+                {
+                    // Notify the remaining player(s) that the game is over
+                    foreach (int remainingClient in room.Value)
+                    {
+                        SendMessageToClient($"{ServerToClientSignifiers.GameRoomDestroyed}", remainingClient, TransportPipeline.ReliableAndInOrder);
+                    }
+                }
+                break;
+            }
+        }
+
+        // Remove client from observers
+        foreach (var observerList in observers.Values)
+        {
+            if (observerList.Contains(clientConnectionID))
+            {
+                Debug.Log($"Removing client {clientConnectionID} from observers.");
+                observerList.Remove(clientConnectionID);
+                break;
+            }
+        }
     }
+
+
 
     static public void SetGameLogic(GameLogic GameLogic)
     {
