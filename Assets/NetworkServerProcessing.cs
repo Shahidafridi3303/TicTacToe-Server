@@ -34,8 +34,13 @@ static public class NetworkServerProcessing
             {
                 accounts[username] = password;
                 SaveAccounts();
+
                 SendMessageToClient($"{ServerToClientSignifiers.AccountCreated}", clientConnectionID, pipeline);
+
+                // Send updated account list
+                SendUpdatedAccountListToClient(clientConnectionID);
             }
+
             else
             {
                 SendMessageToClient($"{ServerToClientSignifiers.AccountCreationFailed}", clientConnectionID, pipeline);
@@ -168,6 +173,13 @@ static public class NetworkServerProcessing
                     }
                 }
             }
+            if (observers.ContainsKey(roomName))
+            {
+                foreach (int observerID in observers[roomName])
+                {
+                    SendMessageToClient($"{ServerToClientSignifiers.OpponentMessage},{message}", observerID, pipeline);
+                }
+            }
         }
         else if (signifier == ClientToServerSignifiers.PlayerMove)
         {
@@ -179,6 +191,13 @@ static public class NetworkServerProcessing
 
             HandlePlayerMove(roomName, clientConnectionID, x, y);
         }
+
+        else if (signifier == ClientToServerSignifiers.RequestAccountList)
+        {
+            Debug.Log($"Received request for account list from Client {clientConnectionID}");
+            SendUpdatedAccountListToClient(clientConnectionID); // Use the helper method defined earlier
+        }
+
 
         else if (signifier == ClientToServerSignifiers.SendMessageToOpponent)
         {
@@ -348,6 +367,18 @@ static public class NetworkServerProcessing
         }
         Debug.Log("Accounts loaded from file.");
     }
+
+    private static void SendUpdatedAccountListToClient(int clientConnectionID)
+    {
+        List<string> formattedAccounts = new List<string>();
+        foreach (var account in accounts)
+        {
+            formattedAccounts.Add($"{account.Key}:{account.Value}");
+        }
+        string accountList = string.Join(",", formattedAccounts);
+        SendMessageToClient($"{ServerToClientSignifiers.AccountList},{accountList}", clientConnectionID, TransportPipeline.ReliableAndInOrder);
+    }
+
 
     private static void SaveAccounts()
     {
@@ -540,6 +571,7 @@ public static class ClientToServerSignifiers
     public const int LeaveGameRoom = 5;
     public const int SendMessageToOpponent = 6;
     public const int PlayerMove = 11; // Ensure this exists in ClientToServerSignifiers
+    public const int RequestAccountList = 13;
 }
 
 public static class ServerToClientSignifiers
