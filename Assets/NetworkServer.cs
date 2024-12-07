@@ -1,60 +1,70 @@
 using UnityEngine;
+using UnityEngine.Assertions;
 using Unity.Collections;
 using Unity.Networking.Transport;
-using System.Collections.Generic;
 using System.Text;
+using System.Collections.Generic;
+using System;
 
 public class NetworkServer : MonoBehaviour
 {
     public NetworkDriver networkDriver;
     private NativeList<NetworkConnection> networkConnections;
-    private NetworkPipeline reliablePipeline;
-    private NetworkPipeline nonReliablePipeline;
-    private const ushort NetworkPort = 9001;
-    private const int MaxConnections = 1000;
-
-    private Dictionary<int, NetworkConnection> idToConnectionMap = new Dictionary<int, NetworkConnection>();
-    private Dictionary<NetworkConnection, int> connectionToIDMap = new Dictionary<NetworkConnection, int>();
-
-    private void Start()
+    NetworkPipeline reliableAndInOrderPipeline;
+    NetworkPipeline nonReliableNotInOrderedPipeline;
+    const ushort NetworkPort = 9001;
+    const int MaxNumberOfClientConnections = 1000;
+    Dictionary<int, NetworkConnection> idToConnectionLookup;
+    Dictionary<NetworkConnection, int> connectionToIDLookup;
+    void Start()
     {
         if (NetworkServerProcessing.GetNetworkServer() == null)
         {
             NetworkServerProcessing.SetNetworkServer(this);
             DontDestroyOnLoad(this.gameObject);
-            InitializeServer();
+
+            InitializeServer(); // Initialize server logic
+            ClearAllGameRoomData(); // Clear all game room data on server start
         }
         else
         {
-            Debug.LogWarning("Duplicate NetworkServer detected. Destroying duplicate.");
+            Debug.Log("Singleton-ish architecture violation detected, investigate where NetworkServer.cs Start() is being called. Are you creating a second instance of the NetworkServer game object or has the NetworkServer.cs been attached to more than one game object?");
             Destroy(this.gameObject);
         }
     }
 
-    private void InitializeServer()
+    private void ClearAllGameRoomData()
     {
-        networkDriver = NetworkDriver.Create();
-        reliablePipeline = networkDriver.CreatePipeline(typeof(FragmentationPipelineStage), typeof(ReliableSequencedPipelineStage));
-        nonReliablePipeline = networkDriver.CreatePipeline(typeof(FragmentationPipelineStage));
-
-        var endpoint = NetworkEndPoint.AnyIpv4;
-        endpoint.Port = NetworkPort;
-
-        if (networkDriver.Bind(endpoint) != 0)
-        {
-            Debug.LogError($"Failed to bind to port {NetworkPort}");
-            return;
-        }
-
-        networkDriver.Listen();
-        networkConnections = new NativeList<NetworkConnection>(MaxConnections, Allocator.Persistent);
-        Debug.Log($"Server started on port {NetworkPort}");
+        NetworkServerProcessing.ClearAllGameRoomData(); // Call the static method in NetworkServerProcessing
+        Debug.Log("All game room data has been cleared on server start.");
     }
 
-    private void OnDestroy()
+    private void InitializeServer()
     {
-        Debug.Log("Shutting down server and disposing resources.");
+        #region Connect
+        idToConnectionLookup = new Dictionary<int, NetworkConnection>();
+        connectionToIDLookup = new Dictionary<NetworkConnection, int>();
 
+        networkDriver = NetworkDriver.Create();
+        reliableAndInOrderPipeline = networkDriver.CreatePipeline(typeof(FragmentationPipelineStage), typeof(ReliableSequencedPipelineStage));
+        nonReliableNotInOrderedPipeline = networkDriver.CreatePipeline(typeof(FragmentationPipelineStage));
+        NetworkEndPoint endpoint = NetworkEndPoint.AnyIpv4;
+        endpoint.Port = NetworkPort;
+
+        int error = networkDriver.Bind(endpoint);
+        if (error != 0)
+            Debug.Log("Failed to bind to port " + NetworkPort);
+        else
+            networkDriver.Listen();
+
+        networkConnections = new NativeList<NetworkConnection>(MaxNumberOfClientConnections, Allocator.Persistent);
+        #endregion
+    }
+
+
+    void OnDestroy()
+    {
+        Debug.Log("Disposing of network driver and connections...");
         foreach (var connection in networkConnections)
         {
             if (connection.IsCreated)
@@ -64,133 +74,213 @@ public class NetworkServer : MonoBehaviour
         }
 
         networkConnections.Dispose();
-
         if (networkDriver.IsCreated)
         {
             networkDriver.Dispose();
         }
-
-        Debug.Log("Network resources disposed.");
+        Debug.Log("Network resources disposed successfully.");
     }
 
-    private void Update()
+
+    void Update()
     {
+        // Ensure the driver state is valid
         if (!networkDriver.IsCreated)
         {
-            Debug.LogWarning("NetworkDriver is not valid.");
+            Debug.LogWarning("NetworkDriver is not created.");
             return;
         }
 
         networkDriver.ScheduleUpdate().Complete();
 
-        AcceptIncomingConnections();
-        ProcessConnections();
-    }
-
-    private void AcceptIncomingConnections()
-    {
-        while (true)
-        {
-            var connection = networkDriver.Accept();
-            if (!connection.IsCreated) break;
-
-            networkConnections.Add(connection);
-            int clientID = AssignClientID(connection);
-            NetworkServerProcessing.ConnectionEvent(clientID);
-            Debug.Log($"Accepted new connection with ID {clientID}");
-        }
-    }
-
-    private int AssignClientID(NetworkConnection connection)
-    {
-        int clientID = 0;
-        while (idToConnectionMap.ContainsKey(clientID)) clientID++;
-
-        idToConnectionMap[clientID] = connection;
-        connectionToIDMap[connection] = clientID;
-
-        return clientID;
-    }
-
-    private void ProcessConnections()
-    {
+        // Check for unused or invalid connections
         for (int i = 0; i < networkConnections.Length; i++)
         {
-            var connection = networkConnections[i];
-            if (!connection.IsCreated)
+            if (!networkConnections[i].IsCreated)
             {
-                HandleDisconnection(connection);
+                Debug.Log($"Removing unused connection at index {i}.");
+                if (connectionToIDLookup.ContainsKey(networkConnections[i]))
+                {
+                    int clientID = connectionToIDLookup[networkConnections[i]];
+                    NetworkServerProcessing.DisconnectionEvent(clientID);
+                    connectionToIDLookup.Remove(networkConnections[i]);
+                    idToConnectionLookup.Remove(clientID);
+                }
                 networkConnections.RemoveAtSwapBack(i);
-                i--; // Adjust the index due to removal
-                continue;
+                i--;
             }
-
-            ProcessConnectionEvents(connection);
         }
-    }
 
-    private void ProcessConnectionEvents(NetworkConnection connection)
-    {
-        while (networkDriver.PopEventForConnection(connection, out var streamReader, out var pipeline) != NetworkEvent.Type.Empty)
+        // Accept new incoming connections
+        while (AcceptIncomingConnection()) { }
+
+        // Process events for each connection
+        for (int i = 0; i < networkConnections.Length; i++)
         {
-            switch (networkDriver.PopEventForConnection(connection, out streamReader, out pipeline))
+            if (!networkConnections[i].IsCreated) continue;
+
+            NetworkEvent.Type eventType;
+            DataStreamReader streamReader;
+            NetworkPipeline pipeline;
+
+            while ((eventType = networkDriver.PopEventForConnection(networkConnections[i], out streamReader, out pipeline)) != NetworkEvent.Type.Empty)
             {
-                case NetworkEvent.Type.Data:
-                    ProcessDataEvent(streamReader, connection, pipeline);
-                    break;
-                case NetworkEvent.Type.Disconnect:
-                    HandleDisconnection(connection);
-                    break;
+                switch (eventType)
+                {
+                    case NetworkEvent.Type.Connect:
+                        Debug.Log($"Client connected: {connectionToIDLookup[networkConnections[i]]}");
+                        break;
+
+                    case NetworkEvent.Type.Data:
+                        if (streamReader.IsCreated)
+                        {
+                            int dataLength = streamReader.ReadInt();
+                            using (NativeArray<byte> buffer = new NativeArray<byte>(dataLength, Allocator.Temp))
+                            {
+                                streamReader.ReadBytes(buffer); // Read into the NativeArray
+                                byte[] receivedData = buffer.ToArray(); // Convert to byte[]
+                                string message = Encoding.Unicode.GetString(receivedData);
+                                NetworkServerProcessing.ReceivedMessageFromClient(
+                                    message,
+                                    connectionToIDLookup[networkConnections[i]],
+                                    TransportPipeline.ReliableAndInOrder
+                                );
+                            }
+                        }
+                        break;
+
+                    case NetworkEvent.Type.Disconnect:
+                        Debug.Log($"Client disconnected: {connectionToIDLookup[networkConnections[i]]}");
+                        int disconnectedClientID = connectionToIDLookup[networkConnections[i]];
+                        NetworkServerProcessing.DisconnectionEvent(disconnectedClientID);
+
+                        connectionToIDLookup.Remove(networkConnections[i]);
+                        idToConnectionLookup.Remove(disconnectedClientID);
+                        networkConnections[i] = default(NetworkConnection);
+                        break;
+                }
             }
         }
     }
 
-    private void ProcessDataEvent(DataStreamReader streamReader, NetworkConnection connection, NetworkPipeline pipeline)
+    void HandleDataEvent(DataStreamReader streamReader, int connectionIndex, NetworkPipeline pipelineUsedToSendEvent)
     {
-        int clientID = connectionToIDMap[connection];
-
-        var buffer = new NativeArray<byte>(streamReader.Length, Allocator.Temp);
-        streamReader.ReadBytes(buffer);
-        var message = Encoding.Unicode.GetString(buffer.ToArray());
-        buffer.Dispose();
-
-        NetworkServerProcessing.ReceivedMessageFromClient(message, clientID, pipeline == reliablePipeline ? TransportPipeline.ReliableAndInOrder : TransportPipeline.FireAndForget);
+        try
+        {
+            int sizeOfDataBuffer = streamReader.ReadInt();
+            NativeArray<byte> buffer = new NativeArray<byte>(sizeOfDataBuffer, Allocator.Persistent);
+            streamReader.ReadBytes(buffer);
+            byte[] byteBuffer = buffer.ToArray();
+            string msg = Encoding.Unicode.GetString(byteBuffer);
+            NetworkServerProcessing.ReceivedMessageFromClient(msg, connectionToIDLookup[networkConnections[connectionIndex]], TransportPipeline.ReliableAndInOrder);
+            buffer.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Error processing data event: {ex.Message}");
+        }
     }
 
-    private void HandleDisconnection(NetworkConnection connection)
+    void HandleDisconnectEvent(int connectionIndex)
     {
-        if (connectionToIDMap.TryGetValue(connection, out int clientID))
+        try
         {
-            NetworkServerProcessing.DisconnectionEvent(clientID);
-            idToConnectionMap.Remove(clientID);
-            connectionToIDMap.Remove(connection);
+            NetworkConnection nc = networkConnections[connectionIndex];
+            if (connectionToIDLookup.ContainsKey(nc))
+            {
+                int id = connectionToIDLookup[nc];
+                NetworkServerProcessing.DisconnectionEvent(id);
+                idToConnectionLookup.Remove(id);
+                connectionToIDLookup.Remove(nc);
+            }
+            networkConnections[connectionIndex] = default(NetworkConnection);
         }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Error handling disconnect event: {ex.Message}");
+        }
+    }
 
-        Debug.Log($"Client {connection} disconnected.");
+    void CheckDriverState()
+    {
+        try
+        {
+            if (!networkDriver.IsCreated)
+            {
+                Debug.LogError("NetworkDriver is no longer valid. Reinitializing...");
+                networkDriver.Dispose();
+                networkDriver = NetworkDriver.Create();
+                Debug.Log("NetworkDriver reinitialized successfully.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Error checking NetworkDriver state: {ex.Message}");
+        }
+    }
+
+    private bool AcceptIncomingConnection()
+    {
+        try
+        {
+            NetworkConnection connection = networkDriver.Accept();
+            if (connection == default(NetworkConnection))
+                return false;
+
+            networkConnections.Add(connection);
+
+            int id = 0;
+            while (idToConnectionLookup.ContainsKey(id))
+            {
+                id++;
+            }
+            idToConnectionLookup.Add(id, connection);
+            connectionToIDLookup.Add(connection, id);
+
+            NetworkServerProcessing.ConnectionEvent(id);
+            Debug.Log($"New connection accepted: {id}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Error accepting incoming connection: {ex.Message}");
+            return false;
+        }
+    }
+
+
+    private bool PopNetworkEventAndCheckForData(NetworkConnection networkConnection, out NetworkEvent.Type networkEventType, out DataStreamReader streamReader, out NetworkPipeline pipelineUsedToSendEvent)
+    {
+        networkEventType = networkConnection.PopEvent(networkDriver, out streamReader, out pipelineUsedToSendEvent);
+
+        if (networkEventType == NetworkEvent.Type.Empty)
+            return false;
+        return true;
     }
 
     public void SendMessageToClient(string msg, int connectionID, TransportPipeline pipeline)
     {
-        if (!idToConnectionMap.TryGetValue(connectionID, out var connection))
-        {
-            Debug.LogWarning($"Connection ID {connectionID} not found.");
-            return;
-        }
+        NetworkPipeline networkPipeline = reliableAndInOrderPipeline;
+        if(pipeline == TransportPipeline.FireAndForget)
+            networkPipeline = nonReliableNotInOrderedPipeline;
 
-        var messageBytes = Encoding.Unicode.GetBytes(msg);
+        byte[] msgAsByteArray = Encoding.Unicode.GetBytes(msg);
+        NativeArray<byte> buffer = new NativeArray<byte>(msgAsByteArray, Allocator.Persistent);
+        DataStreamWriter streamWriter;
 
-        using (var buffer = new NativeArray<byte>(messageBytes, Allocator.Temp))
-        {
-            networkDriver.BeginSend(pipeline == TransportPipeline.ReliableAndInOrder ? reliablePipeline : nonReliablePipeline, connection, out var writer);
-            writer.WriteInt(buffer.Length);
-            writer.WriteBytes(buffer);
-            networkDriver.EndSend(writer);
-        }
+        networkDriver.BeginSend(networkPipeline, idToConnectionLookup[connectionID], out streamWriter);
+        streamWriter.WriteInt(buffer.Length);
+        streamWriter.WriteBytes(buffer);
+        networkDriver.EndSend(streamWriter);
+
+        buffer.Dispose();
     }
+
 }
 
 public enum TransportPipeline
 {
+    NotIdentified,
     ReliableAndInOrder,
     FireAndForget
 }

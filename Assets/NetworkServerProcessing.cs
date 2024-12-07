@@ -21,43 +21,35 @@ static public class NetworkServerProcessing
     static public void ReceivedMessageFromClient(string msg, int clientConnectionID, TransportPipeline pipeline)
     {
         string[] csv = msg.Split(',');
-        int signifier = int.Parse(csv[0]);
-
-        switch (signifier)
+        if (!int.TryParse(csv[0], out int signifier))
         {
-            case ClientToServerSignifiers.CreateAccount:
-                HandleCreateAccount(csv, clientConnectionID, pipeline);
-                break;
-            case ClientToServerSignifiers.Login:
-                HandleLogin(csv, clientConnectionID, pipeline);
-                break;
-            case ClientToServerSignifiers.DeleteAccount:
-                HandleDeleteAccount(csv, clientConnectionID, pipeline);
-                break;
-            case ClientToServerSignifiers.CreateOrJoinGameRoom:
-                HandleCreateOrJoinGameRoom(csv, clientConnectionID, pipeline);
-                break;
-            case ClientToServerSignifiers.LeaveGameRoom:
-                HandleLeaveGameRoom(csv, clientConnectionID, pipeline);
-                break;
-            case ClientToServerSignifiers.SendMessageToOpponent:
-                HandleSendMessageToOpponent(csv, clientConnectionID, pipeline);
-                break;
-            case ClientToServerSignifiers.PlayerMove:
-                HandlePlayerMove(csv, clientConnectionID, pipeline);
-                break;
-            case ClientToServerSignifiers.RequestAccountList:
-                HandleRequestAccountList(csv, clientConnectionID, pipeline);
-                break;
-            case ClientToServerSignifiers.ObserverJoined:
-                HandleObserverJoined(csv, clientConnectionID, pipeline);
-                break;
-            default:
-                Debug.LogWarning($"Unknown signifier received: {signifier}");
-                break;
+            Debug.LogWarning($"Invalid signifier received: {csv[0]}");
+            return;
         }
 
+        if (signifierHandlers.ContainsKey(signifier))
+        {
+            signifierHandlers[signifier]?.Invoke(csv, clientConnectionID, pipeline);
+        }
+        else
+        {
+            Debug.LogWarning($"Unknown signifier received: {signifier}");
+        }
     }
+
+    private static readonly Dictionary<int, Action<string[], int, TransportPipeline>> signifierHandlers = new()
+    {
+        { ClientToServerSignifiers.CreateAccount, HandleCreateAccount },
+        { ClientToServerSignifiers.Login, HandleLogin },
+        { ClientToServerSignifiers.DeleteAccount, HandleDeleteAccount },
+        { ClientToServerSignifiers.CreateOrJoinGameRoom, HandleCreateOrJoinGameRoom },
+        { ClientToServerSignifiers.LeaveGameRoom, HandleLeaveGameRoom },
+        { ClientToServerSignifiers.SendMessageToOpponent, HandleSendMessageToOpponent },
+        { ClientToServerSignifiers.PlayerMove, HandlePlayerMove },
+        { ClientToServerSignifiers.RequestAccountList, HandleRequestAccountList },
+        { ClientToServerSignifiers.ObserverJoined, HandleObserverJoined }
+    };
+
 
     private static void HandleObserverJoined(string[] csv, int clientConnectionID, TransportPipeline pipeline)
     {
@@ -298,6 +290,14 @@ static public class NetworkServerProcessing
 
     private static void HandleDeleteAccount(string[] csv, int clientConnectionID, TransportPipeline pipeline)
     {
+        // Validate CSV length to avoid accessing out-of-bound indices
+        if (csv.Length < 3)
+        {
+            Debug.LogError($"Malformed DeleteAccount message received from client {clientConnectionID}. Expected 3 parts, got {csv.Length}.");
+            SendMessageToClient($"{ServerToClientSignifiers.AccountDeletionFailed},InvalidRequest", clientConnectionID, pipeline);
+            return;
+        }
+
         string username = csv[1];
         string password = csv[2];
 
@@ -305,13 +305,14 @@ static public class NetworkServerProcessing
         {
             accounts.Remove(username);
             SaveAccounts();
-            SendMessageToClient($"{ServerToClientSignifiers.AccountDeleted}", clientConnectionID, pipeline);
+            SendMessageToClient($"{ServerToClientSignifiers.AccountDeleted},{username}", clientConnectionID, pipeline);
         }
         else
         {
-            SendMessageToClient($"{ServerToClientSignifiers.AccountDeletionFailed}", clientConnectionID, pipeline);
+            SendMessageToClient($"{ServerToClientSignifiers.AccountDeletionFailed},{username}", clientConnectionID, pipeline);
         }
     }
+
 
     private static void HandleLogin(string[] csv, int clientConnectionID, TransportPipeline pipeline)
     {
@@ -610,6 +611,7 @@ public static class ClientToServerSignifiers
     public const int SendMessageToOpponent = 6;
     public const int PlayerMove = 11; // Ensure this exists in ClientToServerSignifiers
     public const int RequestAccountList = 13;
+    public const int ObserverJoined = 14;
 }
 
 public static class ServerToClientSignifiers
