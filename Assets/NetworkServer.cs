@@ -35,7 +35,7 @@ public class NetworkServer : MonoBehaviour
 
     private void ClearAllGameRoomData()
     {
-        NetworkServerProcessing.ClearAllGameRoomData(); // Call the static method in NetworkServerProcessing
+        GameLogic.ClearAllRooms(); // Call the method from GameLogic
         Debug.Log("All game room data has been cleared on server start.");
     }
 
