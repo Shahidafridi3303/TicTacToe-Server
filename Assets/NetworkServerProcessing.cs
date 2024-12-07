@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using System.IO;
 using System;
+using UnityEditor.PackageManager;
 
 static public class NetworkServerProcessing
 {
@@ -14,10 +15,6 @@ static public class NetworkServerProcessing
     private static Dictionary<string, List<int>> gameRooms = new Dictionary<string, List<int>>(); // Room to players
     private static Dictionary<string, List<int>> observers = new Dictionary<string, List<int>>(); // Room to observers
 
-    public const int CreateOrJoinGameRoom = 4; // New signifier for game room creation/joining
-    public const int LeaveGameRoom = 5; // New signifier for leaving a game room
-    public const int StartGame = 6; // New signifier for starting the game
-
     private static Dictionary<string, int[,]> gameBoards = new Dictionary<string, int[,]>(); // Room to 3x3 board
     private static Dictionary<string, int> currentTurn = new Dictionary<string, int>(); // Room to current player
 
@@ -26,201 +23,257 @@ static public class NetworkServerProcessing
         string[] csv = msg.Split(',');
         int signifier = int.Parse(csv[0]);
 
-        if (signifier == ClientToServerSignifiers.CreateAccount)
+        switch (signifier)
         {
-            string username = csv[1];
-            string password = csv[2];
-            if (!accounts.ContainsKey(username))
-            {
-                accounts[username] = password;
-                SaveAccounts();
-
-                SendMessageToClient($"{ServerToClientSignifiers.AccountCreated}", clientConnectionID, pipeline);
-
-                // Send updated account list
-                SendUpdatedAccountListToClient(clientConnectionID);
-            }
-
-            else
-            {
-                SendMessageToClient($"{ServerToClientSignifiers.AccountCreationFailed}", clientConnectionID, pipeline);
-            }
+            case ClientToServerSignifiers.CreateAccount:
+                HandleCreateAccount(csv, clientConnectionID, pipeline);
+                break;
+            case ClientToServerSignifiers.Login:
+                HandleLogin(csv, clientConnectionID, pipeline);
+                break;
+            case ClientToServerSignifiers.DeleteAccount:
+                HandleDeleteAccount(csv, clientConnectionID, pipeline);
+                break;
+            case ClientToServerSignifiers.CreateOrJoinGameRoom:
+                HandleCreateOrJoinGameRoom(csv, clientConnectionID, pipeline);
+                break;
+            case ClientToServerSignifiers.LeaveGameRoom:
+                HandleLeaveGameRoom(csv, clientConnectionID, pipeline);
+                break;
+            case ClientToServerSignifiers.SendMessageToOpponent:
+                HandleSendMessageToOpponent(csv, clientConnectionID, pipeline);
+                break;
+            case ClientToServerSignifiers.PlayerMove:
+                HandlePlayerMove(csv, clientConnectionID, pipeline);
+                break;
+            case ClientToServerSignifiers.RequestAccountList:
+                HandleRequestAccountList(csv, clientConnectionID, pipeline);
+                break;
+            case ClientToServerSignifiers.ObserverJoined:
+                HandleObserverJoined(csv, clientConnectionID, pipeline);
+                break;
+            default:
+                Debug.LogWarning($"Unknown signifier received: {signifier}");
+                break;
         }
-        else if (signifier == ClientToServerSignifiers.Login)
+
+    }
+
+    private static void HandleObserverJoined(string[] csv, int clientConnectionID, TransportPipeline pipeline)
+    {
+        string roomName = csv[1];
+        Debug.Log($"Joined room {roomName} as an observer.");
+
+        // Send current board state to the observer
+        if (gameBoards.ContainsKey(roomName))
         {
-            string username = csv[1];
-            string password = csv[2];
-            if (accounts.ContainsKey(username) && accounts[username] == password)
+            int[,] board = gameBoards[roomName];
+            for (int x = 0; x < 3; x++)
             {
-                connectionToUsername[clientConnectionID] = username;
-                SendMessageToClient($"{ServerToClientSignifiers.LoginSuccessful}", clientConnectionID, pipeline);
-            }
-            else
-            {
-                SendMessageToClient($"{ServerToClientSignifiers.LoginFailed}", clientConnectionID, pipeline);
-            }
-        }
-        else if (signifier == ClientToServerSignifiers.CreateOrJoinGameRoom)
-        {
-            string roomName = csv[1];
-
-            if (!gameRooms.ContainsKey(roomName))
-            {
-                gameRooms[roomName] = new List<int>();
-                observers[roomName] = new List<int>();
-                gameBoards[roomName] = new int[3, 3]; // Initialize an empty board
-            }
-
-            if (gameRooms[roomName].Count < 2)
-            {
-                gameRooms[roomName].Add(clientConnectionID);
-                SendMessageToClient($"{ServerToClientSignifiers.GameRoomCreatedOrJoined},{roomName},{gameRooms[roomName].Count}", clientConnectionID, pipeline);
-
-                if (gameRooms[roomName].Count == 2)
+                for (int y = 0; y < 3; y++)
                 {
-                    InitializeGame(roomName);
-
-                    int player1 = gameRooms[roomName][0];
-                    int player2 = gameRooms[roomName][1];
-
-                    SendMessageToClient($"{ServerToClientSignifiers.StartGame},{roomName},X,1", player1, TransportPipeline.ReliableAndInOrder);
-                    SendMessageToClient($"{ServerToClientSignifiers.StartGame},{roomName},O,0", player2, TransportPipeline.ReliableAndInOrder);
-                }
-            }
-            else
-            {
-                // Add the client as an observer
-                observers[roomName].Add(clientConnectionID);
-
-                // Notify the observer that they've joined
-                SendMessageToClient($"{ServerToClientSignifiers.ObserverJoined},{roomName}", clientConnectionID, pipeline);
-
-                // Send the current board state to the observer
-                if (gameBoards.ContainsKey(roomName))
-                {
-                    int[,] board = gameBoards[roomName];
-                    for (int x = 0; x < 3; x++)
+                    if (board[x, y] != 0)
                     {
-                        for (int y = 0; y < 3; y++)
-                        {
-                            if (board[x, y] != 0) // Only send cells that are already occupied
-                            {
-                                int playerMark = board[x, y];
-                                SendMessageToClient(
-                                    $"{ServerToClientSignifiers.PlayerMove},{x},{y},{playerMark}",
-                                    clientConnectionID,
-                                    TransportPipeline.ReliableAndInOrder
-                                );
-                            }
-                        }
+                        int playerMark = board[x, y];
+                        SendMessageToClient(
+                            $"{ServerToClientSignifiers.PlayerMove},{x},{y},{playerMark}",
+                            clientConnectionID,
+                            TransportPipeline.ReliableAndInOrder
+                        );
                     }
                 }
             }
         }
 
+        // Notify observer UI
+        SendMessageToClient($"{ServerToClientSignifiers.ObserverJoined},{roomName}", clientConnectionID, pipeline);
 
-        else if (signifier == ClientToServerSignifiers.LeaveGameRoom)
+    }
+    private static void HandleRequestAccountList(string[] csv, int clientConnectionID, TransportPipeline pipeline)
+    {
+        Debug.Log($"Received request for account list from Client {clientConnectionID}");
+
+        List<string> formattedAccounts = new List<string>();
+        foreach (var account in accounts)
         {
-            string roomName = csv[1];
+            formattedAccounts.Add($"{account.Key}:{account.Value}");
+        }
+        string accountList = string.Join(",", formattedAccounts);
+        SendMessageToClient($"{ServerToClientSignifiers.AccountList},{accountList}", clientConnectionID, TransportPipeline.ReliableAndInOrder);
+    }
 
-            if (gameRooms.ContainsKey(roomName))
-            {
-                if (gameRooms[roomName].Contains(clientConnectionID))
-                {
-                    // A player is leaving, destroy the room and notify everyone
-                    Debug.Log($"Player {clientConnectionID} left room {roomName}. Destroying room.");
+    private static void HandlePlayerMove(string[] csv, int clientConnectionID, TransportPipeline pipeline)
+    {
+        string roomName = csv[1];
+        int x = int.Parse(csv[2]);
+        int y = int.Parse(csv[3]);
 
-                    // Notify all clients in the room to go back to GameRoomPanel
-                    foreach (int clientID in gameRooms[roomName])
-                    {
-                        SendMessageToClient($"{ServerToClientSignifiers.GameRoomDestroyed}", clientID, TransportPipeline.ReliableAndInOrder);
-                    }
+        Debug.Log($"Received PlayerMove from Client {clientConnectionID}: Room {roomName}, x: {x}, y: {y}"); // Add this
 
-                    // Notify observers as well
-                    if (observers.ContainsKey(roomName))
-                    {
-                        foreach (int observerID in observers[roomName])
-                        {
-                            SendMessageToClient($"{ServerToClientSignifiers.GameRoomDestroyed}", observerID, TransportPipeline.ReliableAndInOrder);
-                        }
-                    }
-
-                    // Remove the room and its data
-                    gameRooms.Remove(roomName);
-                    observers.Remove(roomName);
-                    gameBoards.Remove(roomName);
-                }
-                else if (observers.ContainsKey(roomName) && observers[roomName].Contains(clientConnectionID))
-                {
-                    // An observer is leaving, just remove them
-                    observers[roomName].Remove(clientConnectionID);
-                    Debug.Log($"Observer {clientConnectionID} left room {roomName}. No action required.");
-                }
-            }
+        if (!gameBoards.ContainsKey(roomName) || !currentTurn.ContainsKey(roomName))
+        {
+            Debug.LogWarning($"Room does not exist or is not properly initialized: {roomName}");
+            return;
         }
 
-        else if (signifier == ClientToServerSignifiers.SendMessageToOpponent)
+        Debug.Log($"Processing PlayerMove for Room {roomName} by Client {clientConnectionID}: x={x}, y={y}");
+
+        int[,] board = gameBoards[roomName];
+        int currentPlayer = currentTurn[roomName];
+
+        if (clientConnectionID == currentPlayer && board[x, y] == 0)
         {
-            string roomName = csv[1];
-            string message = csv[2];
-            if (gameRooms.ContainsKey(roomName))
+            int playerMark = (gameRooms[roomName].IndexOf(clientConnectionID) == 0) ? 1 : 2;
+            board[x, y] = playerMark;
+
+            foreach (int client in gameRooms[roomName])
             {
-                foreach (int clientID in gameRooms[roomName])
-                {
-                    if (clientID != clientConnectionID) // Send to opponent only
-                    {
-                        SendMessageToClient($"{ServerToClientSignifiers.OpponentMessage},{message}", clientID, pipeline);
-                    }
-                }
+                SendMessageToClient($"{ServerToClientSignifiers.PlayerMove},{x},{y},{playerMark}", client, TransportPipeline.ReliableAndInOrder);
             }
+
             if (observers.ContainsKey(roomName))
             {
-                foreach (int observerID in observers[roomName])
+                foreach (int observer in observers[roomName])
                 {
-                    SendMessageToClient($"{ServerToClientSignifiers.OpponentMessage},{message}", observerID, pipeline);
+                    SendMessageToClient($"{ServerToClientSignifiers.PlayerMove},{x},{y},{playerMark}", observer, TransportPipeline.ReliableAndInOrder);
+                }
+            }
+
+            if (CheckWinCondition(board, playerMark))
+            {
+                foreach (int client in gameRooms[roomName])
+                {
+                    SendMessageToClient($"{ServerToClientSignifiers.GameResult},{playerMark}", client, TransportPipeline.ReliableAndInOrder);
+                }
+
+                NotifyRoomDestroyed(roomName);
+                ResetGameRoom(roomName);
+            }
+            else if (CheckDrawCondition(board))
+            {
+                foreach (int client in gameRooms[roomName])
+                {
+                    SendMessageToClient($"{ServerToClientSignifiers.GameResult},0", client, TransportPipeline.ReliableAndInOrder);
+                }
+
+                NotifyRoomDestroyed(roomName);
+                ResetGameRoom(roomName);
+            }
+            else
+            {
+                currentTurn[roomName] = gameRooms[roomName][1 - gameRooms[roomName].IndexOf(clientConnectionID)];
+                foreach (int client in gameRooms[roomName])
+                {
+                    int isPlayerTurn = (client == currentTurn[roomName]) ? 1 : 0;
+                    SendMessageToClient($"{ServerToClientSignifiers.TurnUpdate},{isPlayerTurn}", client, TransportPipeline.ReliableAndInOrder);
                 }
             }
         }
-        else if (signifier == ClientToServerSignifiers.PlayerMove)
+        else
         {
-            string roomName = csv[1];
-            int x = int.Parse(csv[2]);
-            int y = int.Parse(csv[3]);
-
-            Debug.Log($"Received PlayerMove from Client {clientConnectionID}: Room {roomName}, x: {x}, y: {y}"); // Add this
-
-            HandlePlayerMove(roomName, clientConnectionID, x, y);
+            Debug.LogWarning($"Invalid move or not player's turn. Room: {roomName}, Client: {clientConnectionID}");
         }
+    }
 
-        else if (signifier == ClientToServerSignifiers.RequestAccountList)
+    private static void HandleSendMessageToOpponent(string[] csv, int clientConnectionID, TransportPipeline pipeline)
+    {
+        string roomName = csv[1];
+        string message = csv[2];
+        if (gameRooms.ContainsKey(roomName))
         {
-            Debug.Log($"Received request for account list from Client {clientConnectionID}");
-            SendUpdatedAccountListToClient(clientConnectionID); // Use the helper method defined earlier
-        }
-
-
-        else if (signifier == ClientToServerSignifiers.SendMessageToOpponent)
-        {
-            string roomName = csv[1];
-            string message = csv[2];
-            if (gameRooms.ContainsKey(roomName))
+            foreach (int clientID in gameRooms[roomName])
             {
+                if (clientID != clientConnectionID) // Send to opponent only
+                {
+                    SendMessageToClient($"{ServerToClientSignifiers.OpponentMessage},{message}", clientID, pipeline);
+                }
+            }
+        }
+        if (observers.ContainsKey(roomName))
+        {
+            foreach (int observerID in observers[roomName])
+            {
+                SendMessageToClient($"{ServerToClientSignifiers.OpponentMessage},{message}", observerID, pipeline);
+            }
+        }
+    }
+
+    private static void HandleLeaveGameRoom(string[] csv, int clientConnectionID, TransportPipeline pipeline)
+    {
+        string roomName = csv[1];
+
+        if (gameRooms.ContainsKey(roomName))
+        {
+            if (gameRooms[roomName].Contains(clientConnectionID))
+            {
+                // A player is leaving, destroy the room and notify everyone
+                Debug.Log($"Player {clientConnectionID} left room {roomName}. Destroying room.");
+
+                // Notify all clients in the room to go back to GameRoomPanel
                 foreach (int clientID in gameRooms[roomName])
                 {
-                    if (clientID != clientConnectionID) // Send to opponent only
+                    SendMessageToClient($"{ServerToClientSignifiers.GameRoomDestroyed}", clientID, TransportPipeline.ReliableAndInOrder);
+                }
+
+                // Notify observers as well
+                if (observers.ContainsKey(roomName))
+                {
+                    foreach (int observerID in observers[roomName])
                     {
-                        SendMessageToClient($"{ServerToClientSignifiers.OpponentMessage},{message}", clientID, pipeline);
+                        SendMessageToClient($"{ServerToClientSignifiers.GameRoomDestroyed}", observerID, TransportPipeline.ReliableAndInOrder);
                     }
                 }
+
+                // Remove the room and its data
+                gameRooms.Remove(roomName);
+                observers.Remove(roomName);
+                gameBoards.Remove(roomName);
+            }
+            else if (observers.ContainsKey(roomName) && observers[roomName].Contains(clientConnectionID))
+            {
+                // An observer is leaving, just remove them
+                observers[roomName].Remove(clientConnectionID);
+                Debug.Log($"Observer {clientConnectionID} left room {roomName}. No action required.");
             }
         }
+    }
 
-        else if (signifier == ServerToClientSignifiers.ObserverJoined)
+    private static void HandleCreateOrJoinGameRoom(string[] csv, int clientConnectionID, TransportPipeline pipeline)
+    {
+        string roomName = csv[1];
+
+        if (!gameRooms.ContainsKey(roomName))
         {
-            string roomName = csv[1];
-            Debug.Log($"Joined room {roomName} as an observer.");
+            gameRooms[roomName] = new List<int>();
+            observers[roomName] = new List<int>();
+            gameBoards[roomName] = new int[3, 3]; // Initialize an empty board
+        }
 
-            // Send current board state to the observer
+        if (gameRooms[roomName].Count < 2)
+        {
+            gameRooms[roomName].Add(clientConnectionID);
+            SendMessageToClient($"{ServerToClientSignifiers.GameRoomCreatedOrJoined},{roomName},{gameRooms[roomName].Count}", clientConnectionID, pipeline);
+
+            if (gameRooms[roomName].Count == 2)
+            {
+                InitializeGame(roomName);
+
+                int player1 = gameRooms[roomName][0];
+                int player2 = gameRooms[roomName][1];
+
+                SendMessageToClient($"{ServerToClientSignifiers.StartGame},{roomName},X,1", player1, TransportPipeline.ReliableAndInOrder);
+                SendMessageToClient($"{ServerToClientSignifiers.StartGame},{roomName},O,0", player2, TransportPipeline.ReliableAndInOrder);
+            }
+        }
+        else
+        {
+            // Add the client as an observer
+            observers[roomName].Add(clientConnectionID);
+
+            // Notify the observer that they've joined
+            SendMessageToClient($"{ServerToClientSignifiers.ObserverJoined},{roomName}", clientConnectionID, pipeline);
+
+            // Send the current board state to the observer
             if (gameBoards.ContainsKey(roomName))
             {
                 int[,] board = gameBoards[roomName];
@@ -228,7 +281,7 @@ static public class NetworkServerProcessing
                 {
                     for (int y = 0; y < 3; y++)
                     {
-                        if (board[x, y] != 0)
+                        if (board[x, y] != 0) // Only send cells that are already occupied
                         {
                             int playerMark = board[x, y];
                             SendMessageToClient(
@@ -240,9 +293,59 @@ static public class NetworkServerProcessing
                     }
                 }
             }
+        }
+    }
 
-            // Notify observer UI
-            SendMessageToClient($"{ServerToClientSignifiers.ObserverJoined},{roomName}", clientConnectionID, pipeline);
+    private static void HandleDeleteAccount(string[] csv, int clientConnectionID, TransportPipeline pipeline)
+    {
+        string username = csv[1];
+        string password = csv[2];
+
+        if (accounts.TryGetValue(username, out var storedPassword) && storedPassword == password)
+        {
+            accounts.Remove(username);
+            SaveAccounts();
+            SendMessageToClient($"{ServerToClientSignifiers.AccountDeleted}", clientConnectionID, pipeline);
+        }
+        else
+        {
+            SendMessageToClient($"{ServerToClientSignifiers.AccountDeletionFailed}", clientConnectionID, pipeline);
+        }
+    }
+
+    private static void HandleLogin(string[] csv, int clientConnectionID, TransportPipeline pipeline)
+    {
+        string username = csv[1];
+        string password = csv[2];
+        if (accounts.ContainsKey(username) && accounts[username] == password)
+        {
+            connectionToUsername[clientConnectionID] = username;
+            SendMessageToClient($"{ServerToClientSignifiers.LoginSuccessful}", clientConnectionID, pipeline);
+        }
+        else
+        {
+            SendMessageToClient($"{ServerToClientSignifiers.LoginFailed}", clientConnectionID, pipeline);
+        }
+    }
+
+    private static void HandleCreateAccount(string[] csv, int clientConnectionID, TransportPipeline pipeline)
+    {
+        string username = csv[1];
+        string password = csv[2];
+        if (!accounts.ContainsKey(username))
+        {
+            accounts[username] = password;
+            SaveAccounts();
+
+            SendMessageToClient($"{ServerToClientSignifiers.AccountCreated}", clientConnectionID, pipeline);
+
+            // Send updated account list
+            SendUpdatedAccountListToClient(clientConnectionID);
+        }
+
+        else
+        {
+            SendMessageToClient($"{ServerToClientSignifiers.AccountCreationFailed}", clientConnectionID, pipeline);
         }
     }
 
@@ -421,72 +524,7 @@ static public class NetworkServerProcessing
         Debug.Log($"Turn initialized for room '{roomName}'. Player 1's turn.");
     }
 
-    private static void HandlePlayerMove(string roomName, int clientID, int x, int y)
-    {
-        if (!gameBoards.ContainsKey(roomName) || !currentTurn.ContainsKey(roomName))
-        {
-            Debug.LogWarning($"Room does not exist or is not properly initialized: {roomName}");
-            return;
-        }
-
-        Debug.Log($"Processing PlayerMove for Room {roomName} by Client {clientID}: x={x}, y={y}");
-
-        int[,] board = gameBoards[roomName];
-        int currentPlayer = currentTurn[roomName];
-
-        if (clientID == currentPlayer && board[x, y] == 0)
-        {
-            int playerMark = (gameRooms[roomName].IndexOf(clientID) == 0) ? 1 : 2;
-            board[x, y] = playerMark;
-
-            foreach (int client in gameRooms[roomName])
-            {
-                SendMessageToClient($"{ServerToClientSignifiers.PlayerMove},{x},{y},{playerMark}", client, TransportPipeline.ReliableAndInOrder);
-            }
-
-            if (observers.ContainsKey(roomName))
-            {
-                foreach (int observer in observers[roomName])
-                {
-                    SendMessageToClient($"{ServerToClientSignifiers.PlayerMove},{x},{y},{playerMark}", observer, TransportPipeline.ReliableAndInOrder);
-                }
-            }
-
-            if (CheckWinCondition(board, playerMark))
-            {
-                foreach (int client in gameRooms[roomName])
-                {
-                    SendMessageToClient($"{ServerToClientSignifiers.GameResult},{playerMark}", client, TransportPipeline.ReliableAndInOrder);
-                }
-
-                NotifyRoomDestroyed(roomName);
-                ResetGameRoom(roomName);
-            }
-            else if (CheckDrawCondition(board))
-            {
-                foreach (int client in gameRooms[roomName])
-                {
-                    SendMessageToClient($"{ServerToClientSignifiers.GameResult},0", client, TransportPipeline.ReliableAndInOrder);
-                }
-
-                NotifyRoomDestroyed(roomName);
-                ResetGameRoom(roomName);
-            }
-            else
-            {
-                currentTurn[roomName] = gameRooms[roomName][1 - gameRooms[roomName].IndexOf(clientID)];
-                foreach (int client in gameRooms[roomName])
-                {
-                    int isPlayerTurn = (client == currentTurn[roomName]) ? 1 : 0;
-                    SendMessageToClient($"{ServerToClientSignifiers.TurnUpdate},{isPlayerTurn}", client, TransportPipeline.ReliableAndInOrder);
-                }
-            }
-        }
-        else
-        {
-            Debug.LogWarning($"Invalid move or not player's turn. Room: {roomName}, Client: {clientID}");
-        }
-    }
+    
 
     private static void NotifyRoomDestroyed(string roomName)
     {
