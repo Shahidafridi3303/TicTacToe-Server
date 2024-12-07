@@ -23,19 +23,18 @@ public class NetworkServer : MonoBehaviour
             NetworkServerProcessing.SetNetworkServer(this);
             DontDestroyOnLoad(this.gameObject);
 
-            InitializeServer(); // Initialize server logic
-            ClearAllGameRoomData(); // Clear all game room data on server start
+            InitializeServer();
+            ClearAllGameRoomData();
         }
         else
         {
-            Debug.Log("Singleton-ish architecture violation detected, investigate where NetworkServer.cs Start() is being called. Are you creating a second instance of the NetworkServer game object or has the NetworkServer.cs been attached to more than one game object?");
             Destroy(this.gameObject);
         }
     }
 
     private void ClearAllGameRoomData()
     {
-        GameLogic.ClearAllRooms(); // Call the method from GameLogic
+        GameLogic.ClearAllRooms(); 
         Debug.Log("All game room data has been cleared on server start.");
     }
 
@@ -61,7 +60,6 @@ public class NetworkServer : MonoBehaviour
         #endregion
     }
 
-
     void OnDestroy()
     {
         Debug.Log("Disposing of network driver and connections...");
@@ -81,10 +79,8 @@ public class NetworkServer : MonoBehaviour
         Debug.Log("Network resources disposed successfully.");
     }
 
-
     void Update()
     {
-        // Ensure the driver state is valid
         if (!networkDriver.IsCreated)
         {
             Debug.LogWarning("NetworkDriver is not created.");
@@ -137,8 +133,8 @@ public class NetworkServer : MonoBehaviour
                             int dataLength = streamReader.ReadInt();
                             using (NativeArray<byte> buffer = new NativeArray<byte>(dataLength, Allocator.Temp))
                             {
-                                streamReader.ReadBytes(buffer); // Read into the NativeArray
-                                byte[] receivedData = buffer.ToArray(); // Convert to byte[]
+                                streamReader.ReadBytes(buffer); 
+                                byte[] receivedData = buffer.ToArray();
                                 string message = Encoding.Unicode.GetString(receivedData);
                                 NetworkServerProcessing.ReceivedMessageFromClient(
                                     message,
